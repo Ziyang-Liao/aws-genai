@@ -7,8 +7,6 @@
 
 A production-ready smart light control agent built with **Strands Agents SDK** and **Amazon Bedrock AgentCore**. Control 4 simulated smart lights through natural language — with persistent memory, native skills, and full observability.
 
-> Standardized rewrite of `light-assistant` (TypeScript/MCP Gateway), fully leveraging AgentCore native capabilities.
-
 ---
 
 ## Table of Contents
@@ -71,18 +69,13 @@ User: "Switch to Christmas theme"
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Comparison with light-assistant (v1)
+### Key Design Principles
 
-| Dimension | light-assistant (v1) | light-agent-v2 |
-|-----------|---------------------|----------------|
-| Language | TypeScript | Python |
-| Tool definition | JSON Schema + Lambda | `@tool` decorator (auto schema) |
-| Skill mechanism | ❌ Tool grouping only | ✅ Native `AgentSkills` + `SKILL.md` |
-| Memory | ❌ In-process (lost on restart) | ✅ AgentCore Memory (persistent) |
-| Observability | ❌ None | ✅ OTel auto-instrumentation |
-| Runtime entry | Custom Express server | ✅ `BedrockAgentCoreApp` |
-| Infrastructure | 7+ AWS services | 1 container |
-| Code | Thousands of lines | ~300 lines |
+- **Standard patterns only** — `@tool` for actions, `SKILL.md` for knowledge, `BedrockAgentCoreApp` for runtime entry. No custom frameworks.
+- **Minimal footprint** — ~300 lines of Python, single container deployment, zero external dependencies beyond AWS SDK
+- **Memory-first** — cross-session preference learning built in, not bolted on
+- **Observable by default** — OTel auto-instrumentation with zero code changes
+- **Bilingual** — Chinese & English nicknames, auto-detect response language
 
 ---
 
