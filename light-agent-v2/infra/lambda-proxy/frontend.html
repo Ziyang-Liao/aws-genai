@@ -1717,7 +1717,7 @@ $$('.scene-label').forEach(label => {
    Chat System
    ============================================ */
 let chatBusy = false;
-const chatSessionId = localStorage.getItem('lightAssistantSessionId') || (() => {
+let chatSessionId = localStorage.getItem('lightAssistantSessionId') || (() => {
   const id = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
   localStorage.setItem('lightAssistantSessionId', id);
   return id;
@@ -1843,8 +1843,12 @@ $('#chatSuggestions').addEventListener('click', e => {
   if (btn) sendChat(btn.textContent);
 });
 
-// Clear chat
+// Clear chat + reset session
 $('#chatClear').addEventListener('click', () => {
+  // Generate new session so agent forgets previous context
+  chatSessionId = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+  localStorage.setItem('lightAssistantSessionId', chatSessionId);
+
   const msgs = $('#chatMessages');
   msgs.innerHTML = `
     <div class="chat-welcome">
@@ -1860,7 +1864,6 @@ $('#chatClear').addEventListener('click', () => {
       </div>
     </div>
   `;
-  // Re-bind suggestion clicks
   $('#chatSuggestions').addEventListener('click', e => {
     const btn = e.target.closest('.chat-suggestion');
     if (btn) sendChat(btn.textContent);
