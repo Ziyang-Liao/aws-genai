@@ -1350,33 +1350,6 @@ function updateDeviceState(deviceId, changes) {
   Object.assign(state.devices[deviceId], changes);
   updateScene(deviceId);
   updateDeviceCardUI(deviceId);
-  // Sync to backend via chat API
-  const dev = DEVICES.find(d => d.id === deviceId);
-  const parts = [];
-  if ('on' in changes) parts.push(changes.on ? 'turn on' : 'turn off');
-  if ('brightness' in changes) parts.push(`set brightness to ${changes.brightness}`);
-  if ('color' in changes) parts.push(`set color to ${changes.color}`);
-  const prompt = `${parts.join(' and ')} ${dev ? dev.name : deviceId}`;
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
-  }).catch(() => {});
-}
-
-async function fetchDeviceStates() {
-  try {
-    const resp = await fetch('/api/devices');
-    if (!resp.ok) return;
-    const { devices } = await resp.json();
-    devices.forEach(d => {
-      if (state.devices[d.id]) {
-        Object.assign(state.devices[d.id], d.state);
-        updateScene(d.id);
-        updateDeviceCardUI(d.id);
-      }
-    });
-  } catch (e) { /* backend not available, use local defaults */ }
 }
 
 function syncDevicesFromChat(devicesMap) {
@@ -1583,13 +1556,6 @@ function applyTheme(key) {
     updateDeviceCardUI(devId);
   });
 
-  // Sync theme to backend via chat
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `apply ${key} theme` }),
-  }).catch(() => {});
-
   applyThemeAnimations(key);
 
   // Update active state on buttons
@@ -1687,18 +1653,6 @@ function renderDeviceCards() {
     }
   });
 
-  // Sync brightness to backend on release (not every input)
-  grid.addEventListener('change', e => {
-    const t = e.target;
-    if (t.dataset.action === 'brightness' && t.dataset.device) {
-      fetch(`/api/devices/${t.dataset.device}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brightness: parseInt(t.value) }),
-      }).catch(() => {});
-    }
-  });
-
   grid.addEventListener('click', e => {
     const swatch = e.target.closest('.color-swatch');
     if (!swatch) return;
@@ -1763,7 +1717,11 @@ $$('.scene-label').forEach(label => {
    Chat System
    ============================================ */
 let chatBusy = false;
-const chatSessionId = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+const chatSessionId = localStorage.getItem('lightAssistantSessionId') || (() => {
+  const id = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+  localStorage.setItem('lightAssistantSessionId', id);
+  return id;
+})();
 
 function addMessage(role, content) {
   // Remove welcome if still present
