@@ -89,10 +89,30 @@ light-agent-v2/
 │   │   └── SKILL.md                # 场景模式知识包 (6 预设 + 8 动态氛围)
 │   └── device-discovery/
 │       └── SKILL.md                # 设备发现知识包 (设备列表 + 昵称表)
+├── infra/
+│   └── lambda-proxy/
+│       ├── index.py                # Lambda 代理 (前端页面 + API → AgentCore)
+│       └── frontend.html           # 单页前端 (SVG 场景 + 设备控制 + AI Chat)
 ├── Dockerfile                      # arm64 容器 + OTel auto-instrumentation
 ├── requirements.txt                # 含 bedrock-agentcore + otel 依赖
-└── README.md
+└── .gitignore
 ```
+
+## 前端部署架构
+
+```
+浏览器 → CloudFront → API Gateway (HTTP) → Lambda Proxy → AgentCore Runtime
+              │                                  │
+              │                           GET /  → 返回 frontend.html
+              │                           POST /api/chat → invoke_agent_runtime
+              │
+              └── 缓存已禁用 (实时代理)
+```
+
+- **Chat 是唯一的后端交互通道**：用户通过自然语言控制灯光，Agent 返回 `deviceState` 同步前端
+- **UI 控件（开关/亮度/颜色）为纯前端即时响应**：不发后端请求，保证操作流畅
+- **Session 持久化**：`chatSessionId` 存储在 `localStorage`，刷新页面保持对话上下文
+- **Clear 按钮**：生成新 session_id，Agent 真正忘记之前的对话
 
 ---
 
