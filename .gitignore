@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/devices.json
+*.png
+test_browser*.py
+test_agentcore.py
+skills/skills/
+.kiro/
