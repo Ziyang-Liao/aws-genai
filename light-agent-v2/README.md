@@ -1,8 +1,8 @@
-# Light Agent V2 — 标准化 Strands Agent 实现
+# Light Agent V2 — 智能灯光控制 Agent
 
-基于 Strands Agents SDK (Python) 的标准 Tool + Skill 架构，实现完整的多设备智能灯光控制。
+基于 [Strands Agents SDK](https://github.com/strands-agents/sdk-python) + [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) 构建的多设备智能灯光控制 Agent。
 
-这是 `light-assistant`（TypeScript/MCP Gateway 架构）的标准化重写版本，**全面使用 AgentCore 核心能力**。
+通过自然语言对话控制 4 台智能灯具，支持场景主题切换、设备昵称解析、多轮对话上下文、跨会话记忆。
 
 ---
 
@@ -13,65 +13,57 @@
 | **Runtime** (BedrockAgentCoreApp) | ✅ | `@app.entrypoint` 标准入口，自动处理 /ping + /invocations |
 | **Tool** (@tool) | ✅ | 4 个 `@tool` 装饰器函数，SDK 自动提取 schema |
 | **Skill** (AgentSkills) | ✅ | 2 个 `SKILL.md` 知识包，按需加载 |
-| **Memory** (AgentCore Memory) | ✅ | 跨会话记忆，记住用户偏好（如喜欢暖色调） |
+| **Memory** (AgentCore Memory) | ✅ 可选 | 通过环境变量启用，跨会话记忆用户偏好 |
 | **Observability** (OTel) | ✅ | `opentelemetry-instrument` 自动链路追踪 → CloudWatch |
 | **Identity/Credential** | — | 当前无外部 API 调用，无需凭证管理 |
 | **MCP Gateway** | — | Tool 在本地执行，无需远程路由 |
 
 ---
 
-## 与 light-assistant 的对比
-
-| 维度 | light-assistant | light-agent-v2 (本项目) |
-|------|----------------|------------------------|
-| 语言 | TypeScript | Python |
-| Tool 定义 | JSON Schema + Lambda | `@tool` 装饰器（SDK 自动提取） |
-| Skill 机制 | ❌ 未使用（仅 Tool 分组） | ✅ 原生 `AgentSkills` + `SKILL.md` |
-| Memory | ❌ 无（进程内存，重启丢失） | ✅ AgentCore Memory（跨会话持久化） |
-| Observability | ❌ 无 | ✅ OTel 自动 instrumentation |
-| Runtime 入口 | 自定义 Express | ✅ `BedrockAgentCoreApp` 标准入口 |
-| 部署组件 | 7+ AWS 服务 | 1 个容器 |
-| 代码量 | 数千行 | ~300 行 |
-
----
-
 ## 架构
 
 ```
-用户: "帮我切换到圣诞主题"
-       │
-       ▼
-┌──────────────────────────────────────────────────────────┐
-│  BedrockAgentCoreApp                                     │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  Strands Agent (Claude Haiku 4.5)                  │  │
-│  │                                                    │  │
-│  │  ┌─ AgentCore Memory ──────────────────────────┐   │  │
-│  │  │ 短期记忆: 会话上下文                          │   │  │  ← 自动管理
-│  │  │ 长期记忆: 用户偏好 (SEMANTIC/USER_PREFERENCE) │   │  │
-│  │  └─────────────────────────────────────────────┘   │  │
-│  │                                                    │  │
-│  │  ┌─ Skill: scene-mode ────────────────────────┐    │  │
-│  │  │ 6 预设主题 + 8 动态氛围配色表               │    │  │  ← 按需加载
-│  │  └────────────────────────────────────────────┘    │  │
-│  │  ┌─ Skill: device-discovery ──────────────────┐    │  │
-│  │  │ 设备列表 + 中英文昵称映射表                 │    │  │  ← 按需加载
-│  │  └────────────────────────────────────────────┘    │  │
-│  │           │ 指导                                   │  │
-│  │           ▼                                        │  │
-│  │  ┌─ Tools ────────────────────────────────────┐    │  │
-│  │  │ control_light    — 控制开关/亮度/颜色       │    │  │  ← 始终可用
-│  │  │ query_lights     — 查询设备状态             │    │  │
-│  │  │ discover_devices — 发现可用设备             │    │  │
-│  │  │ resolve_device_name — 昵称解析              │    │  │
-│  │  └────────────────────────────────────────────┘    │  │
-│  └────────────────────────────────────────────────────┘  │
-│                                                          │
-│  ┌─ Observability (OTel) ────────────────────────────┐   │
-│  │ 自动追踪: Agent 推理 → Tool 调用 → 模型请求       │   │  ← 自动 instrument
-│  │ 输出到: CloudWatch GenAI Observability Dashboard   │   │
+用户浏览器
+    │
+    ▼
+┌─ CloudFront ──────────────────────────────────────────────┐
+│  静态页面 + API 代理                                       │
+│  GET /          → 返回前端 HTML                            │
+│  POST /api/chat → Lambda Proxy → AgentCore Runtime        │
+└───────────────────────────┬───────────────────────────────┘
+                            │
+                            ▼
+┌─ AgentCore Runtime ───────────────────────────────────────┐
+│  BedrockAgentCoreApp (容器)                                │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │  Strands Agent (Claude Haiku 4.5)                  │   │
+│  │                                                    │   │
+│  │  ┌─ 会话上下文 ────────────────────────────────┐   │   │
+│  │  │ 进程内 Agent 缓存（按 session_id）           │   │   │  ← 多轮对话
+│  │  │ AgentCore Memory（可选，跨会话持久化）       │   │   │
+│  │  └─────────────────────────────────────────────┘   │   │
+│  │                                                    │   │
+│  │  ┌─ Skill: scene-mode ────────────────────────┐    │   │
+│  │  │ 6 预设主题 + 8 动态氛围配色表               │    │   │  ← 按需加载
+│  │  └────────────────────────────────────────────┘    │   │
+│  │  ┌─ Skill: device-discovery ──────────────────┐    │   │
+│  │  │ 设备列表 + 中英文昵称映射表                 │    │   │  ← 按需加载
+│  │  └────────────────────────────────────────────┘    │   │
+│  │           │                                        │   │
+│  │           ▼                                        │   │
+│  │  ┌─ Tools ────────────────────────────────────┐    │   │
+│  │  │ control_light    — 控制开关/亮度/颜色       │    │   │
+│  │  │ query_lights     — 查询设备状态             │    │   │
+│  │  │ discover_devices — 发现可用设备             │    │   │
+│  │  │ resolve_device_name — 昵称解析              │    │   │
+│  │  └────────────────────────────────────────────┘    │   │
 │  └────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+│                                                           │
+│  ┌─ Observability (OTel) ────────────────────────────┐    │
+│  │ 自动追踪: Agent 推理 → Tool 调用 → 模型请求       │    │  ← 自动 instrument
+│  │ 输出到: CloudWatch GenAI Observability Dashboard   │    │
+│  └────────────────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -80,17 +72,21 @@
 
 ```
 light-agent-v2/
-├── server.py                       # BedrockAgentCoreApp 标准入口 + Memory 集成
-├── demo.py                         # 本地测试 Demo
+├── server.py                       # AgentCore Runtime 入口 + Agent 会话缓存
+├── demo.py                         # 本地测试 Demo（不依赖 AgentCore Runtime）
 ├── tools.py                        # 4 个 @tool 定义
-├── devices.py                      # 设备模型 + 状态管理 + 昵称映射
+├── devices.py                      # 设备模型 + 状态管理 + 昵称映射（线程安全）
 ├── skills/
 │   ├── scene-mode/
 │   │   └── SKILL.md                # 场景模式知识包 (6 预设 + 8 动态氛围)
 │   └── device-discovery/
 │       └── SKILL.md                # 设备发现知识包 (设备列表 + 昵称表)
+├── infra/
+│   └── lambda-proxy/
+│       ├── index.py                # Lambda 函数：CloudFront → AgentCore Runtime
+│       └── frontend.html           # 前端页面（灯光可视化 + AI 聊天）
 ├── Dockerfile                      # arm64 容器 + OTel auto-instrumentation
-├── requirements.txt                # 含 bedrock-agentcore + otel 依赖
+├── requirements.txt
 └── README.md
 ```
 
@@ -104,18 +100,20 @@ light-agent-v2/
 pip install -r requirements.txt
 export AWS_REGION=us-east-1
 
-# 运行 Demo（不需要 Memory）
+# 运行 Demo（不需要 AgentCore Runtime 和 Memory）
 python demo.py
 
 # 或启动 AgentCore 标准服务
 python server.py
 ```
 
-### 启用 AgentCore Memory
+### 启用 AgentCore Memory（可选）
+
+不启用 Memory 时，Agent 通过进程内缓存保持同一会话的多轮对话上下文（容器重启后丢失）。
+启用 Memory 后，Agent 可跨会话记住用户偏好（如"喜欢暖色调"）。
 
 ```bash
 # 1. 创建 Memory 资源
-pip install bedrock-agentcore
 python -c "
 from bedrock_agentcore.memory import MemoryClient
 client = MemoryClient(region_name='us-east-1')
@@ -191,35 +189,36 @@ aws bedrock-agentcore-control create-agent-runtime \
 
 ### 1. BedrockAgentCoreApp（标准化入口）
 
-替代手写 Flask，自动处理 AgentCore 服务契约：
+替代手写 Flask/Express，自动处理 AgentCore 服务契约（`/ping` 健康检查 + `/invocations` 推理入口）：
 
 ```python
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
-
 app = BedrockAgentCoreApp()
 
 @app.entrypoint
 def handle(payload: dict):
+    sm, agent = get_or_create_agent(session_id, actor_id)
     result = agent(payload["prompt"])
-    return {"response": str(result)}
+    return {"response": str(result), "deviceState": device_states}
 
-app.run()  # 自动注册 /ping + /invocations
+app.run()
 ```
 
-### 2. AgentCore Memory（跨会话记忆）
+### 2. 多轮对话上下文
 
-通过环境变量 `AGENTCORE_MEMORY_ID` 启用，Agent 自动获得：
-- **短期记忆**：同一会话内的上下文保持
-- **长期记忆**：跨会话的用户偏好学习（如 "用户喜欢暖色调"）
+同一 `session_id` 的请求复用同一个 Agent 实例，Strands Agent 内部的 message history 自动保持上下文：
 
 ```python
-from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
+_agent_cache: dict[str, tuple] = {}
 
-agent = Agent(
-    session_manager=session_manager,  # 注入 Memory
-    ...
-)
+def get_or_create_agent(session_id, actor_id):
+    if session_id in _agent_cache:
+        return _agent_cache[session_id]  # 复用已有 Agent
+    agent = Agent(model=model, tools=[...], plugins=[...])
+    _agent_cache[session_id] = agent
+    return agent
 ```
+
+可选启用 AgentCore Memory 实现跨会话持久化记忆。
 
 ### 3. Observability（OTel 链路追踪）
 
@@ -229,10 +228,22 @@ Dockerfile 使用 `opentelemetry-instrument` 启动，自动追踪：
 - Bedrock 模型请求的 token 用量
 - 全链路 trace 可在 CloudWatch GenAI Observability Dashboard 查看
 
-### 4. AgentSkills（原生 Skill）
+### 4. AgentSkills（按需加载知识包）
 
 两个 `SKILL.md` 知识包，仅在 Agent 判断需要时加载到上下文：
-- `scene-mode`：6 预设主题 + 8 种动态氛围配色
+- `scene-mode`：6 预设主题（圣诞、万圣节、星空、篝火、极光、日落）+ 8 种动态氛围配色
 - `device-discovery`：设备列表 + 双语昵称映射
 
 不使用时不占 token，比硬编码在 System Prompt 中更高效。
+
+### 5. 前端部署（CloudFront + Lambda Proxy）
+
+前端通过 CloudFront 分发，Lambda 函数作为 API 代理转发请求到 AgentCore Runtime：
+
+```
+浏览器 → CloudFront → Lambda (index.py) → AgentCore Runtime (server.py)
+                                         ↓
+                                    invoke_agent_runtime(payload={prompt, session_id})
+```
+
+Lambda 将前端传入的 `session_id` 同时放入 `runtimeSessionId`（Runtime 路由）和 `payload`（Agent 会话缓存），确保多轮对话上下文正确传递。
