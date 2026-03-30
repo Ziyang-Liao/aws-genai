@@ -71,16 +71,17 @@ def get_state(device_id: str) -> dict:
 
 
 def update_state(device_id: str, *, on=None, brightness=None, color=None) -> dict:
-    s = device_states.setdefault(device_id, {**DEFAULT_STATES.get(device_id, {})})
-    if not s.get("online", True):
-        return {"id": device_id, "error": "device_offline"}
-    if on is not None:
-        s["on"] = bool(on)
-    if brightness is not None:
-        s["brightness"] = max(0, min(100, int(brightness)))
-    if color is not None:
-        s["color"] = color
-    _save(device_states)
+    with _lock:
+        s = device_states.setdefault(device_id, {**DEFAULT_STATES.get(device_id, {})})
+        if not s.get("online", True):
+            return {"id": device_id, "error": "device_offline"}
+        if on is not None:
+            s["on"] = bool(on)
+        if brightness is not None:
+            s["brightness"] = max(0, min(100, int(brightness)))
+        if color is not None:
+            s["color"] = color
+        _save(device_states)
     return get_state(device_id)
 
 

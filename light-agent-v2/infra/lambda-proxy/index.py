@@ -6,7 +6,6 @@ Lambda Proxy — CloudFront → Lambda → AgentCore Runtime
 import json
 import os
 import base64
-import time
 import boto3
 
 RUNTIME_ARN = os.environ["AGENTCORE_RUNTIME_ARN"]
@@ -47,7 +46,7 @@ def handler(event, context):
             session_id = data.get("session_id") or event.get("headers", {}).get("x-session-id") or "default-session-xxxxxxxxxxxxxxxx"
             resp = client.invoke_agent_runtime(
                 agentRuntimeArn=RUNTIME_ARN, runtimeSessionId=session_id,
-                qualifier="DEFAULT", payload=json.dumps({"prompt": prompt}).encode())
+                qualifier="DEFAULT", payload=json.dumps({"prompt": prompt, "session_id": session_id}).encode())
             result = json.loads(resp["response"].read().decode())
             return _json(200, result)
         except Exception as e:

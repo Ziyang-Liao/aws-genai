@@ -8,6 +8,7 @@ Light Agent V2 — 本地 Demo
 """
 
 import json
+import os
 from strands import Agent, AgentSkills
 from strands.models.bedrock import BedrockModel
 from tools import control_light, query_lights, discover_devices, resolve_device_name
@@ -19,8 +20,8 @@ discovery_skill = AgentSkills(skills="./skills/device-discovery")
 
 # ── Agent ──
 model = BedrockModel(
-    model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    region_name="us-east-1",
+    model_id=os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+    region_name=os.environ.get("AWS_REGION", "us-east-1"),
 )
 
 agent = Agent(

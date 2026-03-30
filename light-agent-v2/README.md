@@ -1,46 +1,44 @@
-# Light Agent V2
+# Light Agent V2 — 标准化 Strands Agent 实现
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Strands Agents SDK](https://img.shields.io/badge/Strands_Agents-SDK-orange.svg)](https://github.com/strands-agents/sdk-python)
-[![Amazon Bedrock AgentCore](https://img.shields.io/badge/Amazon_Bedrock-AgentCore-232F3E.svg)](https://aws.amazon.com/bedrock/agentcore/)
+基于 Strands Agents SDK (Python) 的标准 Tool + Skill 架构，实现完整的多设备智能灯光控制。
 
-A production-ready smart light control agent built with **Strands Agents SDK** and **Amazon Bedrock AgentCore**. Control 4 simulated smart lights through natural language — with persistent memory, native skills, and full observability.
+这是 `light-assistant`（TypeScript/MCP Gateway 架构）的标准化重写版本，**全面使用 AgentCore 核心能力**。
 
 ---
 
-## Table of Contents
+## AgentCore 能力使用清单
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [AgentCore Capabilities](#agentcore-capabilities)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Deployment](#deployment)
-- [Frontend](#frontend)
-- [Configuration](#configuration)
-- [Changelog](#changelog)
-- [Contributing](#contributing)
-- [License](#license)
+| AgentCore 能力 | 状态 | 实现方式 |
+|---|---|---|
+| **Runtime** (BedrockAgentCoreApp) | ✅ | `@app.entrypoint` 标准入口，自动处理 /ping + /invocations |
+| **Tool** (@tool) | ✅ | 4 个 `@tool` 装饰器函数，SDK 自动提取 schema |
+| **Skill** (AgentSkills) | ✅ | 2 个 `SKILL.md` 知识包，按需加载 |
+| **Memory** (AgentCore Memory) | ✅ | 跨会话记忆，记住用户偏好（如喜欢暖色调） |
+| **Observability** (OTel) | ✅ | `opentelemetry-instrument` 自动链路追踪 → CloudWatch |
+| **Identity/Credential** | — | 当前无外部 API 调用，无需凭证管理 |
+| **MCP Gateway** | — | Tool 在本地执行，无需远程路由 |
 
 ---
 
-## Features
+## 与 light-assistant 的对比
 
-- 🎯 **4 `@tool` functions** — control, query, discover, resolve nicknames
-- 🧠 **2 native Skills** (`SKILL.md`) — scene themes & device discovery, loaded on-demand
-- 💾 **AgentCore Memory** — cross-session preference learning (SEMANTIC + USER_PREFERENCE)
-- 📊 **OTel Observability** — auto-instrumented traces → CloudWatch GenAI Dashboard
-- 🌐 **Bilingual** — Chinese & English nicknames, auto-detect response language
-- 🎨 **6 preset themes** + 8 dynamic mood modes with per-device color/brightness
-- 🖥️ **Interactive SVG frontend** — real-time scene visualization with AI chat
+| 维度 | light-assistant | light-agent-v2 (本项目) |
+|------|----------------|------------------------|
+| 语言 | TypeScript | Python |
+| Tool 定义 | JSON Schema + Lambda | `@tool` 装饰器（SDK 自动提取） |
+| Skill 机制 | ❌ 未使用（仅 Tool 分组） | ✅ 原生 `AgentSkills` + `SKILL.md` |
+| Memory | ❌ 无（进程内存，重启丢失） | ✅ AgentCore Memory（跨会话持久化） |
+| Observability | ❌ 无 | ✅ OTel 自动 instrumentation |
+| Runtime 入口 | 自定义 Express | ✅ `BedrockAgentCoreApp` 标准入口 |
+| 部署组件 | 7+ AWS 服务 | 1 个容器 |
+| 代码量 | 数千行 | ~300 行 |
 
 ---
 
-## Architecture
+## 架构
 
 ```
-User: "Switch to Christmas theme"
+用户: "帮我切换到圣诞主题"
        │
        ▼
 ┌──────────────────────────────────────────────────────────┐
@@ -49,102 +47,75 @@ User: "Switch to Christmas theme"
 │  │  Strands Agent (Claude Haiku 4.5)                  │  │
 │  │                                                    │  │
 │  │  ┌─ AgentCore Memory ──────────────────────────┐   │  │
-│  │  │ Short-term: session context                  │   │  │
-│  │  │ Long-term: user preferences (SEMANTIC/PREF)  │   │  │
+│  │  │ 短期记忆: 会话上下文                          │   │  │  ← 自动管理
+│  │  │ 长期记忆: 用户偏好 (SEMANTIC/USER_PREFERENCE) │   │  │
 │  │  └─────────────────────────────────────────────┘   │  │
 │  │                                                    │  │
-│  │  ┌─ Skills (SKILL.md) ────────────────────────┐    │  │
-│  │  │ scene-mode: 6 presets + 8 dynamic moods     │    │  │
-│  │  │ device-discovery: registry + nicknames      │    │  │
+│  │  ┌─ Skill: scene-mode ────────────────────────┐    │  │
+│  │  │ 6 预设主题 + 8 动态氛围配色表               │    │  │  ← 按需加载
 │  │  └────────────────────────────────────────────┘    │  │
-│  │           │                                        │  │
-│  │  ┌─ Tools (@tool) ───────────────────────────┐     │  │
-│  │  │ control_light · query_lights               │     │  │
-│  │  │ discover_devices · resolve_device_name      │     │  │
+│  │  ┌─ Skill: device-discovery ──────────────────┐    │  │
+│  │  │ 设备列表 + 中英文昵称映射表                 │    │  │  ← 按需加载
+│  │  └────────────────────────────────────────────┘    │  │
+│  │           │ 指导                                   │  │
+│  │           ▼                                        │  │
+│  │  ┌─ Tools ────────────────────────────────────┐    │  │
+│  │  │ control_light    — 控制开关/亮度/颜色       │    │  │  ← 始终可用
+│  │  │ query_lights     — 查询设备状态             │    │  │
+│  │  │ discover_devices — 发现可用设备             │    │  │
+│  │  │ resolve_device_name — 昵称解析              │    │  │
 │  │  └────────────────────────────────────────────┘    │  │
 │  └────────────────────────────────────────────────────┘  │
-│  ┌─ OTel Auto-Instrumentation ───────────────────────┐   │
-│  │ Agent reasoning → Tool calls → Model requests      │   │
+│                                                          │
+│  ┌─ Observability (OTel) ────────────────────────────┐   │
+│  │ 自动追踪: Agent 推理 → Tool 调用 → 模型请求       │   │  ← 自动 instrument
+│  │ 输出到: CloudWatch GenAI Observability Dashboard   │   │
 │  └────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Key Design Principles
-
-- **Standard patterns only** — `@tool` for actions, `SKILL.md` for knowledge, `BedrockAgentCoreApp` for runtime entry. No custom frameworks.
-- **Minimal footprint** — ~300 lines of Python, single container deployment, zero external dependencies beyond AWS SDK
-- **Memory-first** — cross-session preference learning built in, not bolted on
-- **Observable by default** — OTel auto-instrumentation with zero code changes
-- **Bilingual** — Chinese & English nicknames, auto-detect response language
-
 ---
 
-## AgentCore Capabilities
-
-| Capability | Status | Implementation |
-|---|---|---|
-| **Runtime** (BedrockAgentCoreApp) | ✅ | `@app.entrypoint`, auto /ping + /invocations |
-| **Tool** (@tool) | ✅ | 4 decorated functions, SDK auto-extracts schema |
-| **Skill** (AgentSkills) | ✅ | 2 `SKILL.md` knowledge packs, loaded on-demand |
-| **Memory** | ✅ | Cross-session persistence via `AgentCoreMemorySessionManager` |
-| **Observability** (OTel) | ✅ | `opentelemetry-instrument` → CloudWatch |
-| **Identity/Credential** | — | No external API calls needed |
-| **MCP Gateway** | — | Tools execute locally |
-
----
-
-## Project Structure
+## 项目结构
 
 ```
 light-agent-v2/
-├── server.py                       # BedrockAgentCoreApp entry + Memory integration
-├── tools.py                        # 4 @tool definitions
-├── devices.py                      # Device model, state management, nickname mapping
-├── demo.py                         # Local test demo (no Memory required)
+├── server.py                       # BedrockAgentCoreApp 标准入口 + Memory 集成
+├── demo.py                         # 本地测试 Demo
+├── tools.py                        # 4 个 @tool 定义
+├── devices.py                      # 设备模型 + 状态管理 + 昵称映射
 ├── skills/
 │   ├── scene-mode/
-│   │   └── SKILL.md                # 6 preset themes + 8 dynamic mood palettes
+│   │   └── SKILL.md                # 场景模式知识包 (6 预设 + 8 动态氛围)
 │   └── device-discovery/
-│       └── SKILL.md                # Device registry + bilingual nickname table
-├── infra/
-│   └── lambda-proxy/
-│       ├── index.py                # Lambda proxy (frontend + API → AgentCore)
-│       └── frontend.html           # SPA (SVG scene + device controls + AI chat)
-├── Dockerfile                      # arm64 + OTel auto-instrumentation
-├── requirements.txt
-├── .gitignore
+│       └── SKILL.md                # 设备发现知识包 (设备列表 + 昵称表)
+├── Dockerfile                      # arm64 容器 + OTel auto-instrumentation
+├── requirements.txt                # 含 bedrock-agentcore + otel 依赖
 └── README.md
 ```
 
 ---
 
-## Getting Started
+## 快速开始
 
-### Prerequisites
-
-- Python 3.12+
-- AWS credentials configured (`aws configure`)
-- Amazon Bedrock model access enabled (Claude Haiku 4.5)
-
-### Local Development
+### 本地运行
 
 ```bash
 pip install -r requirements.txt
 export AWS_REGION=us-east-1
 
-# Quick demo (no Memory, no AgentCore)
+# 运行 Demo（不需要 Memory）
 python demo.py
 
-# Full AgentCore server
+# 或启动 AgentCore 标准服务
 python server.py
 ```
 
-### Enable Memory
+### 启用 AgentCore Memory
 
 ```bash
+# 1. 创建 Memory 资源
 pip install bedrock-agentcore
-
-# Create Memory resource
 python -c "
 from bedrock_agentcore.memory import MemoryClient
 client = MemoryClient(region_name='us-east-1')
@@ -165,13 +136,16 @@ mem = client.create_memory_and_wait(
 print('Memory ID:', mem['id'])
 "
 
-export AGENTCORE_MEMORY_ID=<your-memory-id>
+# 2. 设置环境变量后启动
+export AGENTCORE_MEMORY_ID=<上面输出的 Memory ID>
 python server.py
 ```
 
-### Enable Observability
+### 启用 Observability
 
 ```bash
+# 本地带 OTel 追踪运行
+export AGENT_OBSERVABILITY_ENABLED=true
 export OTEL_PYTHON_DISTRO=aws_distro
 export OTEL_PYTHON_CONFIGURATOR=aws_configurator
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
@@ -180,19 +154,16 @@ export OTEL_RESOURCE_ATTRIBUTES=service.name=light-agent-v2
 opentelemetry-instrument python server.py
 ```
 
-> In AgentCore Runtime, OTel is auto-enabled via Dockerfile CMD.
+部署到 AgentCore Runtime 后，OTel 自动启用（Dockerfile CMD 已配置 `opentelemetry-instrument`）。
 
----
-
-## Deployment
-
-### Build & Push to ECR
+### 部署到 AgentCore
 
 ```bash
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export AWS_REGION=us-east-1
 export ECR_REPO=light-agent-v2
 
+# 创建 ECR + 构建推送
 aws ecr create-repository --repository-name $ECR_REPO --region $AWS_REGION
 aws ecr get-login-password --region $AWS_REGION | \
   docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
@@ -200,13 +171,9 @@ aws ecr get-login-password --region $AWS_REGION | \
 docker buildx build --platform linux/arm64 \
   --tag $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest \
   --push .
-```
 
-### Create AgentCore Runtime
-
-```bash
-export ROLE_ARN=$(aws iam get-role --role-name BedrockAgentCoreRuntimeRole \
-  --query 'Role.Arn' --output text)
+# 创建 Runtime
+export ROLE_ARN=$(aws iam get-role --role-name BedrockAgentCoreRuntimeRole --query 'Role.Arn' --output text)
 export IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
 
 aws bedrock-agentcore-control create-agent-runtime \
@@ -215,136 +182,57 @@ aws bedrock-agentcore-control create-agent-runtime \
   --role-arn "$ROLE_ARN" \
   --network-configuration networkMode=PUBLIC \
   --protocol-configuration serverProtocol=HTTP \
-  --environment-variables '{
-    "AGENTCORE_MEMORY_ID": "<your-memory-id>",
-    "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "AWS_REGION": "us-east-1"
-  }' \
   --region $AWS_REGION
 ```
 
-### Deploy Frontend (Lambda Proxy)
+---
 
-```bash
-cd infra/lambda-proxy
-zip -j proxy.zip index.py frontend.html
+## AgentCore 能力详解
 
-aws lambda create-function \
-  --function-name light-agent-proxy \
-  --runtime python3.12 \
-  --handler index.handler \
-  --role <your-lambda-role-arn> \
-  --zip-file fileb://proxy.zip \
-  --timeout 120 \
-  --environment "Variables={AGENTCORE_RUNTIME_ARN=<your-runtime-arn>}"
+### 1. BedrockAgentCoreApp（标准化入口）
+
+替代手写 Flask，自动处理 AgentCore 服务契约：
+
+```python
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
+
+app = BedrockAgentCoreApp()
+
+@app.entrypoint
+def handle(payload: dict):
+    result = agent(payload["prompt"])
+    return {"response": str(result)}
+
+app.run()  # 自动注册 /ping + /invocations
 ```
 
-Then create API Gateway (HTTP API) → Lambda integration, and CloudFront → API Gateway origin.
+### 2. AgentCore Memory（跨会话记忆）
 
----
+通过环境变量 `AGENTCORE_MEMORY_ID` 启用，Agent 自动获得：
+- **短期记忆**：同一会话内的上下文保持
+- **长期记忆**：跨会话的用户偏好学习（如 "用户喜欢暖色调"）
 
-## Frontend
+```python
+from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
 
+agent = Agent(
+    session_manager=session_manager,  # 注入 Memory
+    ...
+)
 ```
-Browser → CloudFront → API Gateway (HTTP) → Lambda Proxy → AgentCore Runtime
-                                               │
-                                        GET /  → frontend.html
-                                        POST /api/chat → invoke_agent_runtime
-```
 
-### Design Decisions
+### 3. Observability（OTel 链路追踪）
 
-- **Chat is the sole backend channel** — natural language controls lights, Agent returns `deviceState` to sync UI
-- **UI controls are local-only** — toggles, sliders, color pickers update the scene instantly without backend calls
-- **Session persistence** — `chatSessionId` stored in `localStorage`, survives page refresh
-- **Clear = new session** — generates fresh session_id so Agent truly forgets prior context
-- **Diff-based sync** — only devices whose state actually changed get updated in the UI
+Dockerfile 使用 `opentelemetry-instrument` 启动，自动追踪：
+- Agent 推理过程
+- 每次 Tool 调用的耗时和参数
+- Bedrock 模型请求的 token 用量
+- 全链路 trace 可在 CloudWatch GenAI Observability Dashboard 查看
 
----
+### 4. AgentSkills（原生 Skill）
 
-## Configuration
+两个 `SKILL.md` 知识包，仅在 Agent 判断需要时加载到上下文：
+- `scene-mode`：6 预设主题 + 8 种动态氛围配色
+- `device-discovery`：设备列表 + 双语昵称映射
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `MODEL_ID` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model ID |
-| `AWS_REGION` | `us-east-1` | AWS region |
-| `AGENTCORE_MEMORY_ID` | _(empty)_ | Memory resource ID (optional, enables persistence) |
-| `AGENTCORE_RUNTIME_ARN` | — | Runtime ARN (Lambda proxy only) |
-
-### Supported Models
-
-| Model | Latency | Use Case |
-|-------|---------|----------|
-| Claude Haiku 4.5 | 2-3s | Default — fast responses |
-| Claude Opus 4 | 8-15s | Complex reasoning |
-
-Switch models by updating the `MODEL_ID` environment variable on the Runtime (no rebuild needed).
-
----
-
-## Changelog
-
-### v2.1.0 (2026-03-28)
-
-**Fixed**
-- Align frontend/backend theme configs — Halloween, Starry, Bonfire, Sunset values now match exactly between `SKILL.md` and frontend `THEMES`
-- Remove broken `PUT /api/devices/:id` endpoint call (route never existed in Lambda proxy)
-- Remove dead `fetchDeviceStates()` function
-- Remove fire-and-forget chat sync from UI controls (unreliable natural language round-trip)
-
-**Added**
-- `localStorage` persistence for `chatSessionId` — session survives page refresh
-- Clear button now generates new session_id — Agent truly forgets prior context
-- `.gitignore` for `data/` and `__pycache__/`
-- Frontend deployment architecture section in README
-
-**Changed**
-- Lambda timeout: 60s → 120s (handles AgentCore cold starts)
-- UI controls are now local-only (no backend sync) — Chat is the sole backend channel
-
-### v2.0.0 (2026-03-28)
-
-**Initial release** — standardized rewrite of light-assistant (v1)
-
-- 4 `@tool` functions: `control_light`, `query_lights`, `discover_devices`, `resolve_device_name`
-- 2 native Skills via `SKILL.md`: scene-mode (6 presets + 8 moods), device-discovery (bilingual nicknames)
-- `BedrockAgentCoreApp` standard runtime entry
-- `AgentCoreMemorySessionManager` for cross-session persistent memory
-- OTel auto-instrumentation via `opentelemetry-instrument`
-- Interactive SVG frontend with real-time scene visualization
-- Lambda proxy + API Gateway + CloudFront deployment stack
-
----
-
-## Known Limitations
-
-- **Container shared state**: All sessions hitting the same AgentCore container share in-memory `device_states`. This is by design for the demo — production use should persist state externally.
-- **Long-term memory extraction**: AgentCore Memory extraction jobs run asynchronously. New sessions may not immediately access preferences learned from previous sessions.
-- **Container rolling update**: After image update, old containers serve until idle timeout (15 min). New containers use the updated image.
-- **Max session duration**: AgentCore Runtime enforces an 8-hour maximum session timeout.
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
-
----
-
-## License
-
-This project is licensed under the MIT License — see the [LICENSE](../LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-- [Strands Agents SDK](https://github.com/strands-agents/sdk-python) — Agent framework
-- [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) — Runtime, Memory, Observability
-- [Anthropic Claude](https://www.anthropic.com/) — Foundation model
+不使用时不占 token，比硬编码在 System Prompt 中更高效。

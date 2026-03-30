@@ -66,9 +66,15 @@ def create_session_manager(session_id: str, actor_id: str):
         return None
 
 
-# ── Agent 工厂（每个 session 创建带 Memory 的 Agent）──────────
+# ── Agent 缓存（同一 session 复用 Agent 保持上下文）─────────
 
-def create_agent(session_id: str = "default", actor_id: str = "user"):
+_agent_cache: dict[str, tuple] = {}
+
+def get_or_create_agent(session_id: str = "default", actor_id: str = "user"):
+    if session_id in _agent_cache:
+        print(f"[Agent] Reusing cached agent (session={session_id})")
+        return _agent_cache[session_id]
+
     sm = create_session_manager(session_id, actor_id)
     kwargs = dict(
         model=model,
@@ -81,7 +87,9 @@ def create_agent(session_id: str = "default", actor_id: str = "user"):
         print(f"[Agent] Created with Memory (session={session_id}, actor={actor_id})")
     else:
         print(f"[Agent] Created without Memory (session={session_id})")
-    return sm, Agent(**kwargs)
+    entry = (sm, Agent(**kwargs))
+    _agent_cache[session_id] = entry
+    return entry
 
 
 # ── BedrockAgentCoreApp ───────────────────────────────────────
@@ -98,20 +106,9 @@ def handle(payload: dict):
     session_id = payload.get("session_id", "default-session-xxxxxxxxxxxxxxxx")
     actor_id = payload.get("actor_id", "web-user")
 
-    sm, agent = create_agent(session_id, actor_id)
-    try:
-        result = agent(prompt)
-        return {
-            "response": str(result),
-            "deviceState": {**device_states},
-        }
-    finally:
-        # 确保 Memory buffer 被 flush
-        if sm:
-            try:
-                sm.close()
-            except Exception:
-                pass
+    sm, agent = get_or_create_agent(session_id, actor_id)
+    result = agent(prompt)
+    return {"response": str(result), "deviceState": {k: dict(v) for k, v in device_states.items()}}
 
 
 if __name__ == "__main__":
