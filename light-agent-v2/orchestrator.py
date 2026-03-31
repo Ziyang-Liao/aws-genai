@@ -14,15 +14,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from strands import Agent, AgentSkills, tool
 from strands.models.bedrock import BedrockModel
+from strands.tools.mcp.mcp_client import MCPClient
 
 from registry import AgentRegistry
 
 # ── 配置 ──
 
-SUPER_MODEL_ID = os.environ.get("SUPER_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+SUPER_MODEL_ID = os.environ.get("SUPER_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 SUB_MODEL_ID = os.environ.get("SUB_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_RETRIES = int(os.environ.get("DISPATCH_MAX_RETRIES", "2"))
+
+# MCP server 配置（环境变量格式: MCP_SERVERS=name1:url1,name2:url2）
+MCP_SERVERS_CONFIG = os.environ.get("MCP_SERVERS", "")
 
 # ── SubAgent 注册 ──
 
@@ -115,6 +119,45 @@ def list_available_agents() -> str:
     return json.dumps(registry.list_agents(), ensure_ascii=False)
 
 
+# ── MCP 客户端管理 ──
+
+_mcp_clients: list[MCPClient] = []
+
+
+def init_mcp_clients():
+    """从环境变量初始化 MCP 客户端。格式: MCP_SERVERS=name1:url1,name2:url2"""
+    if not MCP_SERVERS_CONFIG:
+        return []
+
+    tools = []
+    for entry in MCP_SERVERS_CONFIG.split(","):
+        entry = entry.strip()
+        if ":" not in entry:
+            continue
+        name, url = entry.split(":", 1)
+        try:
+            from mcp.client.streamable_http import streamablehttp_client
+            client = MCPClient(lambda u=url: streamablehttp_client(u))
+            client.__enter__()
+            _mcp_clients.append(client)
+            mcp_tools = client.list_tools_sync()
+            tools.extend(mcp_tools)
+            print(f"[MCP] Connected: {name} ({url}), {len(mcp_tools)} tools")
+        except Exception as e:
+            print(f"[MCP] Failed to connect {name} ({url}): {e}")
+    return tools
+
+
+def shutdown_mcp_clients():
+    """关闭所有 MCP 客户端连接。"""
+    for client in _mcp_clients:
+        try:
+            client.__exit__(None, None, None)
+        except Exception:
+            pass
+    _mcp_clients.clear()
+
+
 # ── SuperAgent 构建 ──
 
 SUPER_SYSTEM_PROMPT = (
@@ -133,13 +176,18 @@ SUPER_SYSTEM_PROMPT = (
 
 
 def create_super_agent(session_manager=None) -> Agent:
-    """创建 SuperAgent 实例。"""
+    """创建 SuperAgent 实例。自动加载 MCP tools（如有配置）。"""
     model = BedrockModel(model_id=SUPER_MODEL_ID, region_name=REGION)
     skills = AgentSkills(skills="./skills/agent-registry:./skills/orchestration")
 
+    all_tools = [dispatch, parallel_dispatch, ask_user, list_available_agents]
+    mcp_tools = init_mcp_clients()
+    if mcp_tools:
+        all_tools.extend(mcp_tools)
+
     kwargs = dict(
         model=model,
-        tools=[dispatch, parallel_dispatch, ask_user, list_available_agents],
+        tools=all_tools,
         plugins=[skills],
         system_prompt=SUPER_SYSTEM_PROMPT,
     )

@@ -116,8 +116,17 @@ python server.py
 ### 自定义模型
 
 ```bash
-export SUPER_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0   # SuperAgent
-export SUB_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0     # SubAgent
+export SUPER_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0   # SuperAgent（默认）
+export SUB_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0     # SubAgent（默认）
+```
+
+### MCP 外部服务集成
+
+通过环境变量配置 MCP server，SuperAgent 自动加载其 tools：
+
+```bash
+# 格式: name:url,name:url
+export MCP_SERVERS=device-inventory:http://localhost:8001/mcp/,home-sensor:http://localhost:8002/mcp/
 ```
 
 ### 扩展新 SubAgent
