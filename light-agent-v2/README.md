@@ -1,68 +1,55 @@
-# Light Agent V2 — 智能灯光控制 Agent
+# Light Agent V2 — Multi-Agent 智能家居控制
 
-基于 [Strands Agents SDK](https://github.com/strands-agents/sdk-python) + [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) 构建的多设备智能灯光控制 Agent。
+基于 [Strands Agents SDK](https://github.com/strands-agents/sdk-python) + [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) 构建的 Multi-Agent 智能家居控制系统。
 
-通过自然语言对话控制 4 台智能灯具，支持场景主题切换、设备昵称解析、多轮对话上下文、跨会话记忆。
-
----
-
-## AgentCore 能力使用清单
-
-| AgentCore 能力 | 状态 | 实现方式 |
-|---|---|---|
-| **Runtime** (BedrockAgentCoreApp) | ✅ | `@app.entrypoint` 标准入口，自动处理 /ping + /invocations |
-| **Tool** (@tool) | ✅ | 4 个 `@tool` 装饰器函数，SDK 自动提取 schema |
-| **Skill** (AgentSkills) | ✅ | 2 个 `SKILL.md` 知识包，按需加载 |
-| **Memory** (AgentCore Memory) | ✅ 可选 | 通过环境变量启用，跨会话记忆用户偏好 |
-| **Observability** (OTel) | ✅ | `opentelemetry-instrument` 自动链路追踪 → CloudWatch |
-| **Identity/Credential** | — | 当前无外部 API 调用，无需凭证管理 |
-| **MCP Gateway** | — | Tool 在本地执行，无需远程路由 |
+SuperAgent（Sonnet 强推理）负责意图理解与任务编排，SubAgent（Haiku 高效执行）负责具体领域操作。
 
 ---
 
 ## 架构
 
 ```
-用户浏览器
+用户请求
     │
     ▼
 ┌─ CloudFront ──────────────────────────────────────────────┐
-│  静态页面 + API 代理                                       │
-│  GET /          → 返回前端 HTML                            │
+│  GET /          → 前端 HTML                                │
 │  POST /api/chat → Lambda Proxy → AgentCore Runtime        │
 └───────────────────────────┬───────────────────────────────┘
                             │
                             ▼
 ┌─ AgentCore Runtime ───────────────────────────────────────┐
-│  BedrockAgentCoreApp (容器)                                │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  Strands Agent (Claude Haiku 4.5)                  │   │
+│                                                           │
+│  ┌─ SuperAgent (Sonnet — 强推理 + 编排) ──────────────┐   │
+│  │  Tools: dispatch, parallel_dispatch, ask_user,     │   │
+│  │         list_available_agents                      │   │
+│  │  Skills: agent-registry, orchestration             │   │
+│  │  Memory: AgentCore Memory (统一管理)               │   │
 │  │                                                    │   │
-│  │  ┌─ 会话上下文 ────────────────────────────────┐   │   │
-│  │  │ 进程内 Agent 缓存（按 session_id）           │   │   │  ← 多轮对话
-│  │  │ AgentCore Memory（可选，跨会话持久化）       │   │   │
-│  │  └─────────────────────────────────────────────┘   │   │
+│  │  编排模式（模型推理驱动，不硬编码）：                │   │
+│  │  · 简单路由 → 单个 SubAgent                        │   │
+│  │  · 并行分发 → 多个独立 SubAgent 同时执行            │   │
+│  │  · 串行编排 → 上游结果作为下游 context              │   │
+│  │  · 澄清循环 → ask_user 主动提问                    │   │
+│  │  · 联动编排 → 跨 Agent 协作                        │   │
+│  └────────────────────────────────────────────────────┘   │
+│       │                                                   │
+│       ▼                                                   │
+│  ┌─ SubAgent 池 (Haiku — 高效执行) ──────────────────┐   │
 │  │                                                    │   │
-│  │  ┌─ Skill: scene-mode ────────────────────────┐    │   │
-│  │  │ 6 预设主题 + 8 动态氛围配色表               │    │   │  ← 按需加载
-│  │  └────────────────────────────────────────────┘    │   │
-│  │  ┌─ Skill: device-discovery ──────────────────┐    │   │
-│  │  │ 设备列表 + 中英文昵称映射表                 │    │   │  ← 按需加载
-│  │  └────────────────────────────────────────────┘    │   │
-│  │           │                                        │   │
-│  │           ▼                                        │   │
-│  │  ┌─ Tools ────────────────────────────────────┐    │   │
-│  │  │ control_light    — 控制开关/亮度/颜色       │    │   │
-│  │  │ query_lights     — 查询设备状态             │    │   │
-│  │  │ discover_devices — 发现可用设备             │    │   │
-│  │  │ resolve_device_name — 昵称解析              │    │   │
-│  │  └────────────────────────────────────────────┘    │   │
+│  │  LightAgent     — 灯光控制/场景/设备查询           │   │
+│  │  GeneralAgent   — 通用对话兜底                     │   │
+│  │  (可扩展更多 SubAgent...)                          │   │
 │  └────────────────────────────────────────────────────┘   │
 │                                                           │
-│  ┌─ Observability (OTel) ────────────────────────────┐    │
-│  │ 自动追踪: Agent 推理 → Tool 调用 → 模型请求       │    │  ← 自动 instrument
-│  │ 输出到: CloudWatch GenAI Observability Dashboard   │    │
-│  └────────────────────────────────────────────────────┘    │
+│  ┌─ 错误处理 ────────────────────────────────────────┐   │
+│  │  网络/超时 → 自动重试(max 2) → 降级               │   │
+│  │  服务异常 → 告知用户重试                           │   │
+│  └────────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌─ Observability (OTel) ────────────────────────────┐   │
+│  │  自动追踪: SuperAgent → dispatch → SubAgent → Tool │   │
+│  └────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -72,20 +59,32 @@
 
 ```
 light-agent-v2/
-├── server.py                       # AgentCore Runtime 入口 + Agent 会话缓存
-├── demo.py                         # 本地测试 Demo（不依赖 AgentCore Runtime）
-├── tools.py                        # 4 个 @tool 定义
-├── devices.py                      # 设备模型 + 状态管理 + 昵称映射（线程安全）
+├── server.py                       # AgentCore Runtime 入口
+├── orchestrator.py                 # SuperAgent 编排器 + dispatch tools
+├── registry.py                     # SubAgent 注册中心
+├── demo.py                         # 本地 Multi-Agent Demo
+├── devices.py                      # 设备模型 + 状态管理
+├── tools.py                        # (兼容保留) 原 tools 入口
+├── agents/
+│   ├── base.py                     # SubAgent 基类
+│   ├── light_agent.py              # 灯光控制 SubAgent
+│   └── general_agent.py            # 通用对话 SubAgent
+├── tools/
+│   └── light_tools.py              # 灯光 @tool 定义
 ├── skills/
+│   ├── agent-registry/
+│   │   └── SKILL.md                # SubAgent 能力注册表
+│   ├── orchestration/
+│   │   └── SKILL.md                # 编排策略知识
 │   ├── scene-mode/
-│   │   └── SKILL.md                # 场景模式知识包 (6 预设 + 8 动态氛围)
+│   │   └── SKILL.md                # 灯光场景配色
 │   └── device-discovery/
-│       └── SKILL.md                # 设备发现知识包 (设备列表 + 昵称表)
+│       └── SKILL.md                # 设备昵称映射
 ├── infra/
 │   └── lambda-proxy/
-│       ├── index.py                # Lambda 函数：CloudFront → AgentCore Runtime
-│       └── frontend.html           # 前端页面（灯光可视化 + AI 聊天）
-├── Dockerfile                      # arm64 容器 + OTel auto-instrumentation
+│       ├── index.py                # Lambda → AgentCore Runtime
+│       └── frontend.html           # 前端页面
+├── Dockerfile
 ├── requirements.txt
 └── README.md
 ```
@@ -100,150 +99,76 @@ light-agent-v2/
 pip install -r requirements.txt
 export AWS_REGION=us-east-1
 
-# 运行 Demo（不需要 AgentCore Runtime 和 Memory）
+# Multi-Agent Demo
 python demo.py
 
 # 或启动 AgentCore 标准服务
 python server.py
 ```
 
-### 启用 AgentCore Memory（可选）
-
-不启用 Memory 时，Agent 通过进程内缓存保持同一会话的多轮对话上下文（容器重启后丢失）。
-启用 Memory 后，Agent 可跨会话记住用户偏好（如"喜欢暖色调"）。
+### 自定义模型
 
 ```bash
-# 1. 创建 Memory 资源
-python -c "
-from bedrock_agentcore.memory import MemoryClient
-client = MemoryClient(region_name='us-east-1')
-mem = client.create_memory_and_wait(
-    name='LightAgentMemory',
-    description='Light agent user preferences and session history',
-    strategies=[
-        {'userPreferenceMemoryStrategy': {
-            'name': 'PreferenceLearner',
-            'namespaceTemplates': ['/preferences/{actorId}/']
-        }},
-        {'semanticMemoryStrategy': {
-            'name': 'FactExtractor',
-            'namespaceTemplates': ['/facts/{actorId}/']
-        }}
-    ]
-)
-print('Memory ID:', mem['id'])
-"
-
-# 2. 设置环境变量后启动
-export AGENTCORE_MEMORY_ID=<上面输出的 Memory ID>
-python server.py
+export SUPER_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0   # SuperAgent
+export SUB_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0     # SubAgent
 ```
 
-### 启用 Observability
+### 扩展新 SubAgent
 
-```bash
-# 本地带 OTel 追踪运行
-export AGENT_OBSERVABILITY_ENABLED=true
-export OTEL_PYTHON_DISTRO=aws_distro
-export OTEL_PYTHON_CONFIGURATOR=aws_configurator
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_RESOURCE_ATTRIBUTES=service.name=light-agent-v2
+1. 在 `agents/` 下创建新文件，继承 `SubAgent`：
 
-opentelemetry-instrument python server.py
+```python
+from agents.base import SubAgent
+from tools.your_tools import your_tool
+
+class YourAgent(SubAgent):
+    name = "your_domain"
+    description = "描述此 Agent 的能力"
+    tools = [your_tool]
+    system_prompt = "你是..."
 ```
 
-部署到 AgentCore Runtime 后，OTel 自动启用（Dockerfile CMD 已配置 `opentelemetry-instrument`）。
+2. 在 `orchestrator.py` 的 `init_registry()` 中注册：
 
-### 部署到 AgentCore
+```python
+from agents.your_agent import YourAgent
+registry.register(YourAgent)
+```
+
+3. 在 `skills/agent-registry/SKILL.md` 中添加描述，SuperAgent 即可自动路由。
+
+### 部署更新
 
 ```bash
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export AWS_REGION=us-east-1
-export ECR_REPO=light-agent-v2
-
-# 创建 ECR + 构建推送
-aws ecr create-repository --repository-name $ECR_REPO --region $AWS_REGION
-aws ecr get-login-password --region $AWS_REGION | \
-  docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+# 1. 构建推送镜像
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin 073090110765.dkr.ecr.us-east-1.amazonaws.com
 
 docker buildx build --platform linux/arm64 \
-  --tag $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest \
+  --tag 073090110765.dkr.ecr.us-east-1.amazonaws.com/light-agent-v2:latest \
   --push .
 
-# 创建 Runtime
-export ROLE_ARN=$(aws iam get-role --role-name BedrockAgentCoreRuntimeRole --query 'Role.Arn' --output text)
-export IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+# 2. 更新 Runtime
+aws bedrock-agentcore-control update-agent-runtime \
+  --agent-runtime-id light_agent_v2-eW6loJ6rV1 \
+  --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"073090110765.dkr.ecr.us-east-1.amazonaws.com/light-agent-v2:latest"}}' \
+  --region us-east-1
 
-aws bedrock-agentcore-control create-agent-runtime \
-  --agent-runtime-name light_agent_v2 \
-  --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$IMAGE_URI\"}}" \
-  --role-arn "$ROLE_ARN" \
-  --network-configuration networkMode=PUBLIC \
-  --protocol-configuration serverProtocol=HTTP \
-  --region $AWS_REGION
+# 3. 等待 READY
+aws bedrock-agentcore-control get-agent-runtime \
+  --agent-runtime-id light_agent_v2-eW6loJ6rV1 \
+  --region us-east-1 --query 'status'
 ```
 
 ---
 
-## AgentCore 能力详解
+## AgentCore 能力使用清单
 
-### 1. BedrockAgentCoreApp（标准化入口）
-
-替代手写 Flask/Express，自动处理 AgentCore 服务契约（`/ping` 健康检查 + `/invocations` 推理入口）：
-
-```python
-app = BedrockAgentCoreApp()
-
-@app.entrypoint
-def handle(payload: dict):
-    sm, agent = get_or_create_agent(session_id, actor_id)
-    result = agent(payload["prompt"])
-    return {"response": str(result), "deviceState": device_states}
-
-app.run()
-```
-
-### 2. 多轮对话上下文
-
-同一 `session_id` 的请求复用同一个 Agent 实例，Strands Agent 内部的 message history 自动保持上下文：
-
-```python
-_agent_cache: dict[str, tuple] = {}
-
-def get_or_create_agent(session_id, actor_id):
-    if session_id in _agent_cache:
-        return _agent_cache[session_id]  # 复用已有 Agent
-    agent = Agent(model=model, tools=[...], plugins=[...])
-    _agent_cache[session_id] = agent
-    return agent
-```
-
-可选启用 AgentCore Memory 实现跨会话持久化记忆。
-
-### 3. Observability（OTel 链路追踪）
-
-Dockerfile 使用 `opentelemetry-instrument` 启动，自动追踪：
-- Agent 推理过程
-- 每次 Tool 调用的耗时和参数
-- Bedrock 模型请求的 token 用量
-- 全链路 trace 可在 CloudWatch GenAI Observability Dashboard 查看
-
-### 4. AgentSkills（按需加载知识包）
-
-两个 `SKILL.md` 知识包，仅在 Agent 判断需要时加载到上下文：
-- `scene-mode`：6 预设主题（圣诞、万圣节、星空、篝火、极光、日落）+ 8 种动态氛围配色
-- `device-discovery`：设备列表 + 双语昵称映射
-
-不使用时不占 token，比硬编码在 System Prompt 中更高效。
-
-### 5. 前端部署（CloudFront + Lambda Proxy）
-
-前端通过 CloudFront 分发，Lambda 函数作为 API 代理转发请求到 AgentCore Runtime：
-
-```
-浏览器 → CloudFront → Lambda (index.py) → AgentCore Runtime (server.py)
-                                         ↓
-                                    invoke_agent_runtime(payload={prompt, session_id})
-```
-
-Lambda 将前端传入的 `session_id` 同时放入 `runtimeSessionId`（Runtime 路由）和 `payload`（Agent 会话缓存），确保多轮对话上下文正确传递。
+| AgentCore 能力 | 状态 | 实现方式 |
+|---|---|---|
+| **Runtime** | ✅ | `BedrockAgentCoreApp` 标准入口 |
+| **Tool** (@tool) | ✅ | SubAgent 领域 tools + SuperAgent 编排 tools |
+| **Skill** (AgentSkills) | ✅ | 4 个 SKILL.md：agent-registry, orchestration, scene-mode, device-discovery |
+| **Memory** | ✅ 可选 | SuperAgent 统一管理，跨会话记忆用户偏好 |
+| **Observability** (OTel) | ✅ | 全链路追踪 SuperAgent → SubAgent → Tool |
+| **Multi-Agent** | ✅ | SuperAgent 编排 + SubAgent 池 + 动态注册 |
