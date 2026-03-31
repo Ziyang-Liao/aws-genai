@@ -1,8 +1,15 @@
 # Light Agent V2 — Multi-Agent 智能家居控制
 
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Python](https://img.shields.io/badge/python-3.12+-green)
+![License](https://img.shields.io/badge/license-MIT-brightgreen)
+![AWS](https://img.shields.io/badge/AWS-Bedrock%20AgentCore-orange)
+
 基于 [Strands Agents SDK](https://github.com/strands-agents/sdk-python) + [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) 构建的 Multi-Agent 智能家居控制系统。
 
 SuperAgent（Sonnet 强推理）负责意图理解与任务编排，SubAgent（Haiku 高效执行）负责具体领域操作。
+
+> 📋 [CHANGELOG](./CHANGELOG.md) · 🤝 [CONTRIBUTING](./CONTRIBUTING.md) · 📄 [LICENSE](../LICENSE)
 
 ---
 
