@@ -1718,7 +1718,7 @@ $$('.scene-label').forEach(label => {
    ============================================ */
 let chatBusy = false;
 let chatSessionId = localStorage.getItem('lightAssistantSessionId') || (() => {
-  const id = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+  const id = 'sess-' + crypto.randomUUID();
   localStorage.setItem('lightAssistantSessionId', id);
   return id;
 })();
@@ -1846,7 +1846,7 @@ $('#chatSuggestions').addEventListener('click', e => {
 // Clear chat + reset session
 $('#chatClear').addEventListener('click', () => {
   // Generate new session so agent forgets previous context
-  chatSessionId = 'session-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+  chatSessionId = 'sess-' + crypto.randomUUID();
   localStorage.setItem('lightAssistantSessionId', chatSessionId);
 
   const msgs = $('#chatMessages');

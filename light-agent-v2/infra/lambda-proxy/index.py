@@ -43,7 +43,7 @@ def handler(event, context):
                 return _json(400, {"error": "missing prompt or message"})
 
             # 从请求中获取 session_id，保持多轮对话上下文
-            session_id = data.get("session_id") or event.get("headers", {}).get("x-session-id") or "default-session-xxxxxxxxxxxxxxxx"
+            session_id = data.get("session_id") or event.get("headers", {}).get("x-session-id") or "default-session-xxxxxxxxxxxxxxxxx"
             resp = client.invoke_agent_runtime(
                 agentRuntimeArn=RUNTIME_ARN, runtimeSessionId=session_id,
                 qualifier="DEFAULT", payload=json.dumps({"prompt": prompt, "session_id": session_id}).encode())
