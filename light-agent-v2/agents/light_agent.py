@@ -6,14 +6,14 @@ LightAgent — 灯光控制 SubAgent
 
 from agents.base import SubAgent
 from tools.light_tools import control_light, query_lights, discover_devices, resolve_device_name
-from tools.animation_tools import run_light_animation, stop_light_animation
+from tools.animation_tools import run_light_animation
 
 
 class LightAgent(SubAgent):
     name = "light"
     description = "智能灯光控制：开关、亮度、颜色、场景主题、设备查询、昵称解析、动态灯效动画（流星/呼吸/彩虹/追逐等任意效果）"
     tools = [control_light, query_lights, discover_devices, resolve_device_name,
-             run_light_animation, stop_light_animation]
+             run_light_animation]
     skills_dir = "./skills/scene-mode:./skills/device-discovery"
 
     system_prompt = (
@@ -28,6 +28,5 @@ class LightAgent(SubAgent):
         "   - 根据用户描述的效果，生成对应的 keyframes 帧序列\n"
         "   - 每帧定义每个设备在该时刻的状态（on/brightness/color）\n"
         "   - 设备顺序默认: hexa → tvb → rope → ylight（从左到右）\n"
-        "   - 用户要求循环时设 repeat=-1，要求停止时用 stop_light_animation\n"
         "7. 只返回操作结果，不要闲聊"
     )
