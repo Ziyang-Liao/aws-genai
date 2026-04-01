@@ -22,9 +22,9 @@ def handler(event, context):
     path = event.get("rawPath", "/")
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
 
-    # 根路径 — 返回前端页面
+    # 根路径 — 返回前端页面（禁止缓存，确保始终加载最新版）
     if path == "/" and method == "GET":
-        return {"statusCode": 200, "headers": {"Content-Type": "text/html; charset=utf-8"}, "body": HTML_PAGE}
+        return {"statusCode": 200, "headers": {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache, no-store, must-revalidate"}, "body": HTML_PAGE}
 
     # 健康检查
     if path in ("/ping", "/api/health"):

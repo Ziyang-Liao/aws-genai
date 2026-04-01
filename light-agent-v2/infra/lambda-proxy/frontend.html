@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Light Assistant — Powered by AWS</title>
+<title>Light Assistant v3 — Powered by AWS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -1790,48 +1790,23 @@ async function sendChat(message) {
     bubble.innerHTML = renderMarkdown(data.response || data.error || 'No response');
 
     // 智能同步：对比前后端状态，只更新真正发生变化的设备
-    if (data.deviceState) {
-      for (const [devId, backendState] of Object.entries(data.deviceState)) {
-        if (!state.devices[devId]) continue;
-        const local = state.devices[devId];
-        // 检查这个设备的状态是否真的和本地不同
-        const changed = (local.on !== backendState.on) ||
-                        (local.brightness !== backendState.brightness) ||
-                        (local.color !== backendState.color);
-        if (changed) {
-          Object.assign(state.devices[devId], backendState);
-          updateScene(devId);
-          updateDeviceCardUI(devId);
-        }
-      }
-      detectAndSyncTheme();
-    }
-
-    // 动画引擎：后端返回 animation 指令时，前端驱动循环
-    if (data.animation) {
-      if (data.animation.stop) {
-        // 停止动画
-        if (window._animationTimer) { clearInterval(window._animationTimer); window._animationTimer = null; }
-      } else if (data.animation.keyframes) {
-        // 启动前端动画循环
-        if (window._animationTimer) clearInterval(window._animationTimer);
-        const frames = data.animation.keyframes;
-        const ms = data.animation.interval_ms || 500;
-        let fi = 0;
-        window._animationTimer = setInterval(() => {
-          const frame = frames[fi % frames.length];
-          for (const [devId, s] of Object.entries(frame)) {
-            if (!state.devices[devId]) continue;
-            if (s.on !== undefined) state.devices[devId].on = s.on;
-            if (s.brightness !== undefined) state.devices[devId].brightness = s.brightness;
-            if (s.color !== undefined) state.devices[devId].color = s.color;
+    try {
+      if (data.deviceState) {
+        for (const [devId, backendState] of Object.entries(data.deviceState)) {
+          if (!state.devices[devId]) continue;
+          const local = state.devices[devId];
+          const changed = (local.on !== backendState.on) ||
+                          (local.brightness !== backendState.brightness) ||
+                          (local.color !== backendState.color);
+          if (changed) {
+            Object.assign(state.devices[devId], backendState);
             updateScene(devId);
             updateDeviceCardUI(devId);
           }
-          fi++;
-        }, ms);
+        }
+        detectAndSyncTheme();
       }
-    }
+    } catch(e) { console.error('[DeviceSync] error:', e); }
   } catch (err) {
     const cursor = $('.typing-cursor', bubble);
     if (cursor) cursor.remove();
