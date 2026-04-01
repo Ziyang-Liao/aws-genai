@@ -1806,6 +1806,32 @@ async function sendChat(message) {
       }
       detectAndSyncTheme();
     }
+
+    // 动画引擎：后端返回 animation 指令时，前端驱动循环
+    if (data.animation) {
+      if (data.animation.stop) {
+        // 停止动画
+        if (window._animationTimer) { clearInterval(window._animationTimer); window._animationTimer = null; }
+      } else if (data.animation.keyframes) {
+        // 启动前端动画循环
+        if (window._animationTimer) clearInterval(window._animationTimer);
+        const frames = data.animation.keyframes;
+        const ms = data.animation.interval_ms || 500;
+        let fi = 0;
+        window._animationTimer = setInterval(() => {
+          const frame = frames[fi % frames.length];
+          for (const [devId, s] of Object.entries(frame)) {
+            if (!state.devices[devId]) continue;
+            if (s.on !== undefined) state.devices[devId].on = s.on;
+            if (s.brightness !== undefined) state.devices[devId].brightness = s.brightness;
+            if (s.color !== undefined) state.devices[devId].color = s.color;
+            updateScene(devId);
+            updateDeviceCardUI(devId);
+          }
+          fi++;
+        }, ms);
+      }
+    }
   } catch (err) {
     const cursor = $('.typing-cursor', bubble);
     if (cursor) cursor.remove();

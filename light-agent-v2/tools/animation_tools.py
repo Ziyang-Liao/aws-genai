@@ -1,48 +1,37 @@
 """
 动态灯效执行引擎 — 通用帧序列执行器
 
-SuperAgent 根据用户需求生成帧序列（keyframes），此 tool 负责按时序执行。
-支持任意灯效组合：流星、呼吸、彩虹、追逐、闪烁、波浪……
-
-设计原则：
-  - tool 不理解"流星"或"呼吸"的含义，只执行帧序列
-  - SuperAgent 负责将用户的自然语言描述转化为具体的帧序列
-  - 帧序列是通用数据结构，可表达任意灯效
+设计：
+  - 有限次数（repeat=N）：后端同步执行，直接返回结果
+  - 持续循环（repeat=-1）：后端执行一轮 + 返回 animation 指令，前端驱动循环
+  - tool 不理解灯效语义，只执行帧序列；LLM 负责生成 keyframes
 """
 
 import json
 import time
-import threading
 
 from strands import tool
-from devices import get_device_ids, update_state, get_state, DEVICE_REGISTRY
+from devices import update_state, get_state, DEVICE_REGISTRY
 
-# 全局动画控制
-_animation_lock = threading.Lock()
-_stop_event = threading.Event()
-_animation_thread: threading.Thread | None = None
+# 模块级变量：存储最近一次的 animation 指令，供 server.py 提取
+last_animation: dict | None = None
 
 
-def _run_animation(keyframes: list[dict], interval_ms: int, repeat: int):
-    """在后台线程执行帧序列。"""
+def _execute_frames(keyframes: list[dict], interval_ms: int):
+    """同步执行一轮帧序列。"""
     interval_s = interval_ms / 1000.0
-    cycle = 0
-    while (repeat == -1 or cycle < repeat) and not _stop_event.is_set():
-        for frame in keyframes:
-            if _stop_event.is_set():
-                return
-            for device_id, state in frame.items():
-                if device_id not in DEVICE_REGISTRY:
-                    continue
-                update_state(
-                    device_id,
-                    on=state.get("on"),
-                    brightness=state.get("brightness"),
-                    color=state.get("color"),
-                )
-            if not _stop_event.is_set():
-                time.sleep(interval_s)
-        cycle += 1
+    for i, frame in enumerate(keyframes):
+        for device_id, state in frame.items():
+            if device_id not in DEVICE_REGISTRY:
+                continue
+            update_state(
+                device_id,
+                on=state.get("on"),
+                brightness=state.get("brightness"),
+                color=state.get("color"),
+            )
+        if i < len(keyframes) - 1:
+            time.sleep(interval_s)
 
 
 @tool
@@ -51,77 +40,62 @@ def run_light_animation(
     interval_ms: int = 500,
     repeat: int = 1,
 ) -> str:
-    """Execute a dynamic light animation defined as a sequence of keyframes.
+    """Execute a dynamic light animation as a sequence of keyframes.
 
-    Each keyframe is a dict mapping device_id to its state for that frame.
-    The engine plays frames in order with the given interval, repeating as specified.
-    This is a universal animation engine — any light effect can be expressed as keyframes.
+    Each keyframe maps device_id to its target state for that frame.
+    For finite repeats, executes synchronously. For infinite loop (repeat=-1),
+    executes one cycle and returns animation data for the frontend to continue looping.
 
     Args:
-        keyframes: List of frame dicts. Each frame: {"device_id": {"on": bool, "brightness": int, "color": "#hex"}, ...}. Omitted devices keep their current state in that frame.
+        keyframes: List of frame dicts. Each frame: {"device_id": {"on": bool, "brightness": int, "color": "#hex"}, ...}.
         interval_ms: Milliseconds between frames. Default 500.
-        repeat: Number of cycles. Use -1 for infinite loop (until stop_light_animation is called). Default 1.
+        repeat: Number of cycles to run. Use -1 for continuous loop. Default 1.
 
-    Example — meteor effect (left to right):
+    Example — chase effect (one light at a time, left to right):
         keyframes: [
-            {"hexa": {"on": true, "brightness": 100, "color": "#87ceeb"}, "tvb": {"on": false}, "rope": {"on": false}, "ylight": {"on": false}},
-            {"hexa": {"on": true, "brightness": 40}, "tvb": {"on": true, "brightness": 100, "color": "#87ceeb"}, "rope": {"on": false}, "ylight": {"on": false}},
-            {"hexa": {"on": false}, "tvb": {"on": true, "brightness": 40}, "rope": {"on": true, "brightness": 100, "color": "#87ceeb"}, "ylight": {"on": false}},
-            {"hexa": {"on": false}, "tvb": {"on": false}, "rope": {"on": true, "brightness": 40}, "ylight": {"on": true, "brightness": 100, "color": "#87ceeb"}},
-            {"hexa": {"on": false}, "tvb": {"on": false}, "rope": {"on": false}, "ylight": {"on": true, "brightness": 40}}
+            {"hexa": {"on": true, "brightness": 100, "color": "#ffffff"}, "tvb": {"on": false}, "rope": {"on": false}, "ylight": {"on": false}},
+            {"hexa": {"on": false}, "tvb": {"on": true, "brightness": 100, "color": "#ffffff"}, "rope": {"on": false}, "ylight": {"on": false}},
+            {"hexa": {"on": false}, "tvb": {"on": false}, "rope": {"on": true, "brightness": 100, "color": "#ffffff"}, "ylight": {"on": false}},
+            {"hexa": {"on": false}, "tvb": {"on": false}, "rope": {"on": false}, "ylight": {"on": true, "brightness": 100, "color": "#ffffff"}}
         ]
-        interval_ms: 400
-        repeat: 3
+        interval_ms: 500
+        repeat: -1
     """
-    global _animation_thread
-
-    with _animation_lock:
-        # 停止正在运行的动画
-        if _animation_thread and _animation_thread.is_alive():
-            _stop_event.set()
-            _animation_thread.join(timeout=5)
-
-        _stop_event.clear()
-
-        if repeat == -1:
-            # 无限循环在后台线程运行
-            _animation_thread = threading.Thread(
-                target=_run_animation,
-                args=(keyframes, interval_ms, repeat),
-                daemon=True,
-            )
-            _animation_thread.start()
-            return json.dumps({
-                "success": True,
-                "mode": "looping",
-                "frames": len(keyframes),
+    if repeat == -1:
+        # 执行一轮让用户看到效果，然后返回动画数据让前端持续循环
+        _execute_frames(keyframes, interval_ms)
+        global last_animation
+        last_animation = {"keyframes": keyframes, "interval_ms": interval_ms}
+        return json.dumps({
+            "success": True,
+            "mode": "continuous",
+            "animation": {
+                "keyframes": keyframes,
                 "interval_ms": interval_ms,
-                "message": "Animation running in background. Use stop_light_animation to stop.",
-            })
-        else:
-            # 有限次数同步执行
-            _run_animation(keyframes, interval_ms, repeat)
-            states = {did: get_state(did) for did in DEVICE_REGISTRY}
-            return json.dumps({
-                "success": True,
-                "mode": "completed",
-                "frames": len(keyframes),
-                "cycles": repeat,
-                "interval_ms": interval_ms,
-                "final_state": states,
-            })
+            },
+            "message": "Animation playing. Frontend will continue looping. Say '停止灯效' to stop.",
+        })
+    else:
+        for _ in range(repeat):
+            _execute_frames(keyframes, interval_ms)
+        states = {did: get_state(did) for did in DEVICE_REGISTRY}
+        return json.dumps({
+            "success": True,
+            "mode": "completed",
+            "cycles": repeat,
+            "frames": len(keyframes),
+            "interval_ms": interval_ms,
+            "final_state": states,
+        })
 
 
 @tool
 def stop_light_animation() -> str:
-    """Stop any currently running light animation."""
-    global _animation_thread
-
-    with _animation_lock:
-        if _animation_thread and _animation_thread.is_alive():
-            _stop_event.set()
-            _animation_thread.join(timeout=5)
-            _animation_thread = None
-            states = {did: get_state(did) for did in DEVICE_REGISTRY}
-            return json.dumps({"success": True, "message": "Animation stopped.", "final_state": states})
-        return json.dumps({"success": True, "message": "No animation running."})
+    """Stop the currently running light animation on the frontend."""
+    global last_animation
+    last_animation = {"stop": True}
+    return json.dumps({
+        "success": True,
+        "animation": {"stop": True},
+        "message": "Animation stop signal sent.",
+    })

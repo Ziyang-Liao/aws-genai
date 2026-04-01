@@ -5,6 +5,7 @@ SuperAgent（Sonnet 强推理）编排 SubAgent（Haiku 执行）。
 AgentCore 能力：Runtime + Tool + Skill + Memory + OTel
 """
 
+import json
 import os
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from orchestrator import init_registry, create_super_agent
@@ -68,10 +69,26 @@ def handle(payload: dict):
 
     sm, agent = get_or_create_agent(session_id, actor_id)
     result = agent(prompt)
-    return {
-        "response": str(result),
+    response_text = str(result)
+
+    # 从 animation tool 提取动画指令传给前端
+    animation = None
+    try:
+        from tools.animation_tools import last_animation
+        import tools.animation_tools as _at
+        if _at.last_animation is not None:
+            animation = _at.last_animation
+            _at.last_animation = None  # 消费后清空
+    except Exception:
+        pass
+
+    resp = {
+        "response": response_text,
         "deviceState": {k: dict(v) for k, v in device_states.items()},
     }
+    if animation:
+        resp["animation"] = animation
+    return resp
 
 
 if __name__ == "__main__":
