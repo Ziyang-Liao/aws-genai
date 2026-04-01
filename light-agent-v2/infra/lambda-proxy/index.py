@@ -43,7 +43,11 @@ def handler(event, context):
                 return _json(400, {"error": "missing prompt or message"})
 
             # 从请求中获取 session_id，保持多轮对话上下文
-            session_id = data.get("session_id") or event.get("headers", {}).get("x-session-id") or "default-session-xxxxxxxxxxxxxxxxx"
+            session_id = data.get("session_id") or event.get("headers", {}).get("x-session-id") or ""
+            # AgentCore 要求 runtimeSessionId >= 33 字符，不足则补齐
+            if len(session_id) < 33:
+                import hashlib, time
+                session_id = "sess-" + hashlib.md5(f"{session_id}{time.time()}".encode()).hexdigest()
             resp = client.invoke_agent_runtime(
                 agentRuntimeArn=RUNTIME_ARN, runtimeSessionId=session_id,
                 qualifier="DEFAULT", payload=json.dumps({"prompt": prompt, "session_id": session_id}).encode())
