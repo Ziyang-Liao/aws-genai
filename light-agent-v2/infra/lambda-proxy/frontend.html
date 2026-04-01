@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Light Assistant v3 — Powered by AWS</title>
+<title>Light Assistant — Powered by AWS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -1723,6 +1723,21 @@ let chatSessionId = localStorage.getItem('lightAssistantSessionId') || (() => {
   return id;
 })();
 
+// 页面加载时从后端同步真实设备状态
+(async () => {
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '查看所有灯的状态', session_id: chatSessionId }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.deviceState) syncDevicesFromChat(data.deviceState);
+    }
+  } catch(e) { /* 静默失败，用默认状态 */ }
+})();
+
 function addMessage(role, content) {
   // Remove welcome if still present
   const welcome = $('.chat-welcome');
@@ -1790,23 +1805,22 @@ async function sendChat(message) {
     bubble.innerHTML = renderMarkdown(data.response || data.error || 'No response');
 
     // 智能同步：对比前后端状态，只更新真正发生变化的设备
-    try {
-      if (data.deviceState) {
-        for (const [devId, backendState] of Object.entries(data.deviceState)) {
-          if (!state.devices[devId]) continue;
-          const local = state.devices[devId];
-          const changed = (local.on !== backendState.on) ||
-                          (local.brightness !== backendState.brightness) ||
-                          (local.color !== backendState.color);
-          if (changed) {
-            Object.assign(state.devices[devId], backendState);
-            updateScene(devId);
-            updateDeviceCardUI(devId);
-          }
+    if (data.deviceState) {
+      for (const [devId, backendState] of Object.entries(data.deviceState)) {
+        if (!state.devices[devId]) continue;
+        const local = state.devices[devId];
+        // 检查这个设备的状态是否真的和本地不同
+        const changed = (local.on !== backendState.on) ||
+                        (local.brightness !== backendState.brightness) ||
+                        (local.color !== backendState.color);
+        if (changed) {
+          Object.assign(state.devices[devId], backendState);
+          updateScene(devId);
+          updateDeviceCardUI(devId);
         }
-        detectAndSyncTheme();
       }
-    } catch(e) { console.error('[DeviceSync] error:', e); }
+      detectAndSyncTheme();
+    }
   } catch (err) {
     const cursor = $('.typing-cursor', bubble);
     if (cursor) cursor.remove();
